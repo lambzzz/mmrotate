@@ -935,3 +935,87 @@ def gt2gaussian(target):
     R = torch.stack([cos_sin * neg, cos_sin[..., [1, 0]]], dim=-2)
 
     return (center, R.matmul(diag).matmul(R.transpose(-1, -2)))
+
+
+def obb2oobb(rbboxes, version='le90', angles=[0]):
+    """Convert oriented bounding boxes to oriented outer bounding boxes.
+
+    Args:
+        obbs (torch.Tensor): [x_ctr,y_ctr,w,h,angle]
+        version (Str): angle representations.
+
+    Returns:
+        hbbs (torch.Tensor): [x_lt,y_lt,x_rb,y_rb,angle]
+    """
+    if version == 'le90':
+        results = obb2oobb_le90(rbboxes, angles)
+    else:
+        raise NotImplementedError
+    return results
+
+
+def obb2oobb_le90(obboxes, angles):
+    """Convert oriented bounding boxes to oriented outer bounding boxes.
+
+    Args:
+        obbs (torch.Tensor): [x_ctr,y_ctr,w,h,angle]
+
+    Returns:
+        oobbs (torch.Tensor): [x_ctr,y_ctr,w,h,angle]
+    """
+    # N = obboxes.shape[0]
+    # if N == 0:
+    #     return obboxes.new_zeros((obboxes.size(0), 4))
+    device = obboxes.device
+    num_bboxes = obboxes.size(0)
+    center, w, h, theta = torch.split(obboxes, [2, 1, 1, 1], dim=-1)
+    for index, angle in enumerate(angles):
+        a = angle/180*math.pi
+        Cos, Sin = torch.abs(torch.cos(theta-a)), torch.abs(torch.sin(theta-a))
+        oobb_w = (w * Cos) + (h * Sin)
+        oobb_h = (w * Sin) + (h * Cos)
+        if index == 0:
+            wh = oobb_w*oobb_h
+            oobb_theta = torch.full((num_bboxes, 1), a, device=device)
+            oobb = torch.cat([oobb_w, oobb_h, oobb_theta], dim=1)
+        else:
+            wh_ = oobb_w*oobb_h
+            choose = wh_ < wh
+            wh = torch.min(wh, wh_)
+            oobb_theta = torch.full((num_bboxes, 1), a, device=device)
+            oobb = torch.cat([oobb_w, oobb_h, oobb_theta], dim=1)*choose + oobb*~choose
+
+    return torch.cat([center, oobb], dim=1)
+
+
+def obb2aobb(obboxes, angle):
+    """Convert oriented bounding boxes to anchor oriented bounding boxes.
+
+    Args:
+        obbs (torch.Tensor): [x_ctr,y_ctr,w,h,angle]
+
+    Returns:
+        oobbs (torch.Tensor): [x_ctr,y_ctr,w,h,angle]
+    """
+    # N = obboxes.shape[0]
+    # if N == 0:
+    #     return obboxes.new_zeros((obboxes.size(0), 4))
+    assert obboxes.size(0) == angle.size(0)
+
+    center, w, h, theta = torch.split(obboxes, [2, 1, 1, 1], dim=-1)
+    Cos, Sin = torch.abs(torch.cos(theta-angle)), torch.abs(torch.sin(theta-angle))
+    oobb_w = (w * Cos) + (h * Sin)
+    oobb_h = (w * Sin) + (h * Cos)
+
+    aobb = torch.cat([center, oobb_w, oobb_h, angle], dim=1)
+
+    return aobb
+    
+
+
+if __name__ == '__main__':
+    obb = torch.tensor([[802, 256, 442, 44, 0.1],
+                        [0, 0, 20, 10, 0.6],
+                        [722, 331, 131, 26, 1.0]])
+    angles = torch.tensor([[0], [math.pi/4], [math.pi/4]])
+    print(obb2aobb(obb, angles))

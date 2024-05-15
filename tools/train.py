@@ -47,7 +47,7 @@ def parse_args():
         nargs='+',
         help='ids of gpus to use '
         '(only applicable to non-distributed training)')
-    parser.add_argument('--seed', type=int, default=None, help='random seed')
+    parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument(
         '--diff-seed',
         action='store_true',
@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument(
         '--deterministic',
         action='store_true',
+        default=True,
         help='whether to set deterministic options for CUDNN backend.')
     parser.add_argument(
         '--cfg-options',
@@ -99,7 +100,7 @@ def main():
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
-        cfg.work_dir = osp.join('./work_dirs',
+        cfg.work_dir = osp.join('../work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from

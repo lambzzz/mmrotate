@@ -65,7 +65,7 @@ class DOTADataset(CustomDataset):
         ann_files = glob.glob(ann_folder + '/*.txt')
         data_infos = []
         if not ann_files:  # test phase
-            ann_files = glob.glob(ann_folder + '/*.png')
+            ann_files = glob.glob(self.img_prefix + '/*.png')
             for ann_file in ann_files:
                 data_info = {}
                 img_id = osp.split(ann_file)[1][:-4]
@@ -93,6 +93,8 @@ class DOTADataset(CustomDataset):
                     continue
 
                 with open(ann_file) as f:
+                    # f.readline()
+                    # f.readline()
                     s = f.readlines()
                     for si in s:
                         bbox_info = si.split()
@@ -198,7 +200,7 @@ class DOTADataset(CustomDataset):
         eval_results = {}
         if metric == 'mAP':
             assert isinstance(iou_thr, float)
-            mean_ap, _ = eval_rbbox_map(
+            mean_ap, eval_res = eval_rbbox_map(
                 results,
                 annotations,
                 scale_ranges=scale_ranges,
@@ -210,6 +212,8 @@ class DOTADataset(CustomDataset):
         else:
             raise NotImplementedError
 
+        # eval_res[0]['recall']
+        # eval_res[0]['precision']
         return eval_results
 
     def merge_det(self, results, nproc=4):

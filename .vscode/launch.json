@@ -1,0 +1,40 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: debug",
+            "type": "python",
+            "request": "launch",
+            "program": "./tools/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": ["fibertrainconfig/multi_instance_oriented_rcnn.py",
+                    // "--resume-from",
+                    // "work_dirs/multi_instance_oriented_crowddet/epoch_60.pth"
+                ] 
+        }
+    ]
+}
+
+// {
+//     // 使用 IntelliSense 了解相关属性。 
+//     // 悬停以查看现有属性的描述。
+//     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Python: debug",
+//             "type": "python",
+//             "request": "launch",
+//             "program": "./tools/test.py",
+//             "console": "integratedTerminal",
+//             "justMyCode": false,
+//             "args": ["fibertrainconfig/oriented_crowddet.py",
+//                     "work_dirs/oriented_crowddet/epoch_60.pth",
+//                     "--eval", "mAP"] 
+//         }
+//     ]
+// }

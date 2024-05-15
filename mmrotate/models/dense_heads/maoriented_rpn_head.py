@@ -9,76 +9,27 @@ from mmcv.runner import force_fp32
 from mmdet.utils import get_root_logger
 
 from mmrotate.core.bbox.iou_calculators.builder import *
-from mmrotate.core import obb2xyxy
+from mmrotate.core import obb2xyxy, obb2oobb
 from ..builder import ROTATED_HEADS
 from .rotated_rpn_head import RotatedRPNHead
 
 
 @ROTATED_HEADS.register_module()
-class OrientedRPNHead(RotatedRPNHead):
+class MAOrientedRPNHead(RotatedRPNHead):
     """Oriented RPN head for Oriented R-CNN."""
+
+    def __init__(self, **kwargs):
+        super(MAOrientedRPNHead, self).__init__(**kwargs)
+        self.angles = self.prior_generator.angles
 
     def _init_layers(self):
         """Initialize layers of the head."""
         self.rpn_conv = nn.Conv2d(
             self.in_channels, self.feat_channels, 3, padding=1)
-        # self.rpn_conv = nn.Sequential(
-        #     nn.Conv2d(self.in_channels, self.feat_channels, 3, padding=1),
-        #     nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1)
-        # )
         self.rpn_cls = nn.Conv2d(self.feat_channels,
                                  self.num_anchors * self.cls_out_channels, 1)
         self.rpn_reg = nn.Conv2d(self.feat_channels, self.num_anchors * 6, 1)
 
-    # # RPN验证
-    # @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
-    # def valid_rpn(self, proposal_list, gt_bboxes, img_metas):
-    #     """
-    #     【20210825-INCREASE】 验证RPN的有效性:(参考函数_get_targets_single中的用法)
-    #     GT有没有取到: RPN输出的数据中, 每个GT上有没有roi, 有的话有多少个, iou是多少
-    #     ROIs类别是否判断正确: 由于RPN默认只区分fg/bg, 暂不考虑
-    #     Args:
-    #         proposal_list: batch_size * [num_rois, [4; cls_scores]]
-    #         gt_bboxes: batch_size * [num_gts, 4]
-    #         img_metas: {}
-    #     Returns:
-
-    #     """
-    #     logger = get_root_logger('INFO')
-    #     log_str = ""
-    #     num_imgs = len(img_metas)
-
-    #     # 与GT进行匹配，考虑最简单的情况，取消了assign的后2个参数; 由于assign返回的是字典类型，所以不能使用multi_apply
-    #     # assign_results = multi_apply(self.assigner.assign, proposal_anchor_list, gt_bboxes)
-    #     for i in range(num_imgs):
-    #         if 'assigner_' not in locals().keys() :
-    #             self.assigner_ = copy.deepcopy(self.assigner)
-    #             self.assigner_.iou_calculator = build_iou_calculator(dict(type='RBboxOverlaps2D'))
-    #         assign_results = self.assigner_.assign(proposal_list[i], gt_bboxes[i])
-    #         gt_inds = assign_results.gt_inds
-    #         max_overlaps = assign_results.max_overlaps
-    #         # 是不是每一个GT都被取到了
-    #         num_gts = gt_bboxes[i].shape[0]
-    #         log_str += f'\ti:g{num_gts}'
-    #         cnt_miss_gt = 0
-    #         for j in range(num_gts):
-    #             # XXX: 注意：输出的gt_inds，默认为-1，小于neg_iou_thr为0，n个gt的索引为1~n而非0~n-1
-    #             j_inds = (gt_inds == j+1)
-    #             if j_inds.sum().item() == 0:
-    #                 cnt_miss_gt += 1
-    #                 continue
-    #             # j_cnt07 = (max_overlaps[j_inds] > 0.7).sum().item()
-    #             # j_cnt05 = (max_overlaps[j_inds] > 0.5).sum().item()
-    #             # log_str += f'{j_cnt05 - j_cnt07}-{j_cnt07}_'
-
-    #         cnt07 = (max_overlaps > 0.7).sum().item()
-    #         cnt05 = (max_overlaps > 0.5).sum().item()
-    #         if cnt_miss_gt > 0:
-    #             log_str += f'\tm{cnt_miss_gt}'
-    #         else:
-    #             log_str += '\t'
-    #         log_str += f'\t{cnt05}\t{cnt07}'
-    #     logger.info(log_str)
 
     def _get_targets_single(self,
                             flat_anchors,
@@ -95,14 +46,14 @@ class OrientedRPNHead(RotatedRPNHead):
         Args:
             flat_anchors (torch.Tensor): Multi-level anchors of the image,
                 which are concatenated into a single tensor of shape
-                (num_anchors ,4)
+                (num_anchors ,5)
             valid_flags (torch.Tensor): Multi level valid flags of the image,
                 which are concatenated into a single tensor of
                     shape (num_anchors,).
             gt_bboxes (torch.Tensor): Ground truth bboxes of the image,
-                shape (num_gts, 4).
+                shape (num_gts, 5).
             gt_bboxes_ignore (torch.Tensor): Ground truth bboxes to be
-                ignored, shape (num_ignored_gts, 4).
+                ignored, shape (num_ignored_gts, 5).
             img_meta (dict): Meta info of the image.
             gt_labels (torch.Tensor): Ground truth labels of each box,
                 shape (num_gts,).
@@ -129,7 +80,7 @@ class OrientedRPNHead(RotatedRPNHead):
         # assign gt and sample anchors
         anchors = flat_anchors[inside_flags, :]
 
-        gt_hbboxes = obb2xyxy(gt_bboxes, self.version)
+        gt_hbboxes = obb2oobb(gt_bboxes, self.version, self.angles)
 
         assign_result = self.assigner.assign(
             anchors, gt_hbboxes, gt_bboxes_ignore,
@@ -328,8 +279,8 @@ class OrientedRPNHead(RotatedRPNHead):
                 scores = scores[valid_mask]
                 ids = ids[valid_mask]
         if proposals.numel() > 0:
-            hproposals = obb2xyxy(proposals, self.version)
-            _, keep = batched_nms(hproposals, scores, ids, cfg.nms)
+            # hproposals = obb2xyxy(proposals, self.version)
+            _, keep = batched_nms(proposals, scores, ids, cfg.nms)
             dets = torch.cat([proposals, scores[:, None]], dim=1)
             dets = dets[keep]
         else:

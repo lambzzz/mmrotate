@@ -15,7 +15,7 @@ from .rotated_rpn_head import RotatedRPNHead
 
 
 @ROTATED_HEADS.register_module()
-class OrientedRPNHead(RotatedRPNHead):
+class RRPNHead(RotatedRPNHead):
     """Oriented RPN head for Oriented R-CNN."""
 
     def _init_layers(self):
@@ -28,7 +28,7 @@ class OrientedRPNHead(RotatedRPNHead):
         # )
         self.rpn_cls = nn.Conv2d(self.feat_channels,
                                  self.num_anchors * self.cls_out_channels, 1)
-        self.rpn_reg = nn.Conv2d(self.feat_channels, self.num_anchors * 6, 1)
+        self.rpn_reg = nn.Conv2d(self.feat_channels, self.num_anchors * 5, 1)
 
     # # RPN验证
     # @force_fp32(apply_to=('cls_scores', 'bbox_preds'))
@@ -145,8 +145,8 @@ class OrientedRPNHead(RotatedRPNHead):
                 gt_bboxes[sampling_result.pos_assigned_gt_inds, :]
 
         num_valid_anchors = anchors.shape[0]
-        bbox_targets = anchors.new_zeros((anchors.size(0), 6))
-        bbox_weights = anchors.new_zeros((anchors.size(0), 6))
+        bbox_targets = anchors.new_zeros((anchors.size(0), 5))
+        bbox_weights = anchors.new_zeros((anchors.size(0), 5))
         labels = anchors.new_full((num_valid_anchors, ),
                                   self.num_classes,
                                   dtype=torch.long)
@@ -227,9 +227,9 @@ class OrientedRPNHead(RotatedRPNHead):
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
         # regression loss
-        bbox_targets = bbox_targets.reshape(-1, 6)
-        bbox_weights = bbox_weights.reshape(-1, 6)
-        bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(-1, 6)
+        bbox_targets = bbox_targets.reshape(-1, 5)
+        bbox_weights = bbox_weights.reshape(-1, 5)
+        bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(-1, 5)
         if self.reg_decoded_bbox:
             # When the regression loss (e.g. `IouLoss`, `GIouLoss`)
             # is applied directly on the decoded bounding boxes, it
@@ -297,7 +297,7 @@ class OrientedRPNHead(RotatedRPNHead):
                 # be consistent with other head since mmdet v2.0. In mmdet v2.0
                 # to v2.4 we keep BG label as 0 and FG label as 1 in rpn head.
                 scores = rpn_cls_score.softmax(dim=1)[:, 0]
-            rpn_bbox_pred = rpn_bbox_pred.permute(1, 2, 0).reshape(-1, 6)
+            rpn_bbox_pred = rpn_bbox_pred.permute(1, 2, 0).reshape(-1, 5)
             anchors = mlvl_anchors[idx]
             if cfg.nms_pre > 0 and scores.shape[0] > cfg.nms_pre:
                 # sort is faster than topk

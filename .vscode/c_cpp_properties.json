@@ -1,0 +1,19 @@
+{
+    "configurations": [
+           {
+    "name": "Linux",
+    "includePath": [
+    "${workspaceFolder}/**",
+    "/root/miniconda3/lib/python3.8/site-packages/torch/include/",
+    "/root/miniconda3/lib/python3.8/site-packages/torch/include/torch/csrc/api/include/",
+    "/root/miniconda3/include/"
+               ],
+    "defines": [],
+    "compilerPath": "/usr/local/cuda/bin/nvcc",
+    "cStandard": "c11",
+    "cppStandard": "c++17",
+    "intelliSenseMode": "linux-gcc-x64"
+           }
+       ],
+    "version": 4
+   }
