@@ -1,3 +1,26 @@
+// {
+//     // 使用 IntelliSense 了解相关属性。 
+//     // 悬停以查看现有属性的描述。
+//     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Python: debug",
+//             "type": "python",
+//             "request": "launch",
+//             "program": "./tools/train.py",
+//             "console": "integratedTerminal",
+//             "justMyCode": false,
+//             "args": [
+//                     // "fiberconfig/SetOriented_RPN/multi_instance_oriented_rcnn.py",
+//                     "dotaconfig/ConvFormer_Head/Oriented_CFHead_DOTA.py",
+//                     // "--resume-from",
+//                     // "work_dirs/multi_instance_oriented_crowddet/epoch_60.pth"
+//                 ] 
+//         }
+//     ]
+// }
+
 {
     // 使用 IntelliSense 了解相关属性。 
     // 悬停以查看现有属性的描述。
@@ -8,16 +31,17 @@
             "name": "Python: debug",
             "type": "python",
             "request": "launch",
-            "program": "./tools/train.py",
+            "program": "./tools/test.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "args": ["fibertrainconfig/multi_instance_oriented_rcnn.py",
-                    // "--resume-from",
-                    // "work_dirs/multi_instance_oriented_crowddet/epoch_60.pth"
+            "args": ["dotaconfig/ConvFormer_Head/Oriented_CFHead_DOTA.py",
+                    "work_dirs/Oriented_CFHead_DOTA/epoch_12.pth",
+                    "--format-only",
                 ] 
         }
     ]
 }
+
 
 // {
 //     // 使用 IntelliSense 了解相关属性。 
@@ -29,12 +53,42 @@
 //             "name": "Python: debug",
 //             "type": "python",
 //             "request": "launch",
-//             "program": "./tools/test.py",
+//             "program": "./tools/analysis_tools/vis_cam.py",
 //             "console": "integratedTerminal",
 //             "justMyCode": false,
-//             "args": ["fibertrainconfig/oriented_crowddet.py",
-//                     "work_dirs/oriented_crowddet/epoch_60.pth",
-//                     "--eval", "mAP"] 
+//             "args": [
+//                     "../autodl-tmp/split_ss_dota/test/images/P0536__1024__824___101.png",
+//                     "dotaconfig/Oriented_rcnn/Oriented_rcnn_DOTA.py",
+//                     "work_dirs/Oriented_rcnn_DOTA/epoch_12.pth",
+//                     "--method", "eigencam",
+//                     "--out-dir", "cam_r50/",
+//                     "--no-norm-in-bbox"
+//                 ] 
+//         }
+//     ]
+// }
+
+// {
+//     // 使用 IntelliSense 了解相关属性。 
+//     // 悬停以查看现有属性的描述。
+//     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+//     "version": "0.2.0",
+//     "configurations": [
+//         {
+//             "name": "Python: debug",
+//             "type": "python",
+//             "request": "launch",
+//             "program": "./tools/analysis_tools/vis_cam.py",
+//             "console": "integratedTerminal",
+//             "justMyCode": false,
+//             "args": [
+//                     "../autodl-tmp/split_ss_dota/test/images/P0536__1024__824___101.png",
+//                     "dotaconfig/RDCN/Oriented_rcnn_rdcn_DOTA.py",
+//                     "work_dirs/Oriented_rcnn_rdcn_DOTA/epoch_12.pth",
+//                     "--method", "eigencam",
+//                     "--out-dir", "cam_a50/",
+//                     "--no-norm-in-bbox"
+//                 ] 
 //         }
 //     ]
 // }

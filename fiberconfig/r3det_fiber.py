@@ -137,6 +137,30 @@ model = dict(
                 gamma=2.0,
                 alpha=0.25,
                 loss_weight=1.0),
+            loss_bbox=dict(type='SmoothL1Loss', beta=0.11, loss_weight=1.0)),
+        dict(
+            type='RotatedRetinaRefineHead',
+            num_classes=15,
+            in_channels=256,
+            stacked_convs=4,
+            feat_channels=256,
+            assign_by_circumhbbox=None,
+            anchor_generator=dict(
+                type='PseudoAnchorGenerator', strides=[8, 16, 32, 64, 128]),
+            bbox_coder=dict(
+                type='DeltaXYWHAOBBoxCoder',
+                angle_range=angle_version,
+                norm_factor=None,
+                edge_swap=False,
+                proj_xy=False,
+                target_means=(0.0, 0.0, 0.0, 0.0, 0.0),
+                target_stds=(1.0, 1.0, 1.0, 1.0, 1.0)),
+            loss_cls=dict(
+                type='FocalLoss',
+                use_sigmoid=True,
+                gamma=2.0,
+                alpha=0.25,
+                loss_weight=1.0),
             loss_bbox=dict(type='SmoothL1Loss', beta=0.11, loss_weight=1.0))
     ],
     train_cfg=dict(

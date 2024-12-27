@@ -2,7 +2,7 @@ import torch
 from mmdet.models.backbones import ResNet
 from .coordattention import CoordAtt
 from .seattention import SEAttention
-from ..builder import ROTATED_BACKBONES
+from ...builder import ROTATED_BACKBONES
  
  
 # 定义带attention的resnet18基类

@@ -10,11 +10,13 @@ from .cascade_rotated_roi_head import CascadeRotatedRoIHead
 from .multi_instance_roi_head import MultiInstanceRoIHead
 from .cascade_multi_roi_head import CascadeMultiRoIHead
 from .iter_roi_head import IterRoIHead
+from .oriented_standard_roi_head_imted import OrientedStandardRoIHeadimTED
+from .oriented_convformer_roi_head import OrientedConvFormerRoIHead
 
 __all__ = [
     'RotatedBBoxHead', 'RotatedConvFCBBoxHead', 'RotatedShared2FCBBoxHead',
     'RotatedStandardRoIHead', 'RotatedSingleRoIExtractor',
     'OrientedStandardRoIHead', 'RoITransRoIHead', 'GVRatioRoIHead', 
     'CascadeRotatedRoIHead', 'MultiInstanceRoIHead', 'CascadeMultiRoIHead',
-    'IterRoIHead'
+    'IterRoIHead', 'OrientedStandardRoIHeadimTED', 'OrientedConvFormerRoIHead'
 ]

@@ -155,7 +155,7 @@ class MultiInstanceAssigner(MaxIoUAssigner):
             gt_assignment_ignore * ignore_assign_mask)
 
         if all_labels is None:
-            all_labels = all_bboxes.new_zeros(all_bboxes.shape[0])
+            all_labels = all_bboxes.new_zeros(all_bboxes.shape[0], dtype=torch.long)
         assigned_labels = all_labels[gt_assignment]
         fg_mask = (overlaps >= self.pos_iou_thr) * (assigned_labels != -1)
         bg_mask = (overlaps < self.neg_iou_thr) * (overlaps >= 0)
@@ -177,21 +177,15 @@ class MultiInstanceAssigner(MaxIoUAssigner):
                 if gt_max_overlaps[i] >= self.min_pos_iou:
                     if self.gt_max_assign_all:
                         max_iou_inds = (_overlaps_normal[:, i] == gt_max_overlaps[i]).nonzero(as_tuple=True)[0]
-                        for ind in max_iou_inds:
-                            # if assigned_labels[ind, 0] == 1:
-                            #     if not gt_assignment[ind, 0] == i:
-                            #         gt_assignment[ind, 1] = i 
-                            #         assigned_labels[ind, 1] = 1
-                            # else:
-                            #     gt_assignment[ind, 0] = i 
-                            #     assigned_labels[ind, 0] = 1
+                        for ind in max_iou_inds:        # 遍历目标GT最大重叠的所有anchor
 
+                            # assigned_labels：anchor是否为GT. gt_assignment：anchor关联的gt索引
                             for j in range(self.num_instance):
                                 if assigned_labels[ind, j] == 1 and j < self.num_instance-1:
                                     if gt_assignment[ind, j] != i:
-                                        continue
+                                        continue        # 首选框非目标GT，在次选框中关联
                                     else:
-                                        break
+                                        break           # 如果当前anchor已经关联了目标GT，跳过
                                 else:
                                     gt_assignment[ind, j] = i 
                                     assigned_labels[ind, j] = 1

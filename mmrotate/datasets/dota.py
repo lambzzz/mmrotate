@@ -65,7 +65,7 @@ class DOTADataset(CustomDataset):
         ann_files = glob.glob(ann_folder + '/*.txt')
         data_infos = []
         if not ann_files:  # test phase
-            ann_files = glob.glob(self.img_prefix + '/*.png')
+            ann_files = glob.glob(ann_folder + '/*.png')
             for ann_file in ann_files:
                 data_info = {}
                 img_id = osp.split(ann_file)[1][:-4]
@@ -298,7 +298,7 @@ class DOTADataset(CustomDataset):
 
         return files
 
-    def format_results(self, results, submission_dir=None, nproc=4, **kwargs):
+    def format_results(self, results, submission_dir='/root/sub/', nproc=1, **kwargs):
         """Format the results to submission text (standard format for DOTA
         evaluation).
 

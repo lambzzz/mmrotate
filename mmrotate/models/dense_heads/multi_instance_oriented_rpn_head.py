@@ -179,17 +179,22 @@ class MultiInstanceOrientedRPNHead(OrientedRPNHead):
         # assign gt and sample anchors
         anchors = flat_anchors[inside_flags, :]
 
+        # 添加假GT，防止anchor无法匹配num_instance个GT
+        # fake_bboxes = gt_bboxes.new_tensor([[10000 + i * 1000, 10000 + i * 1000, 100, 100, 0] for i in range(self.num_instance)])
+        # gt_bboxes = torch.cat((gt_bboxes, fake_bboxes), dim=0)
+
         gt_hbboxes = obb2xyxy(gt_bboxes, self.version)
         gt_labels = gt_hbboxes.new_full((gt_hbboxes.shape[0],), -1, dtype=int)
-        # num_gts = gt_hbboxes.shape[0]
-        # if num_gts < self.num_instance:
-        #     pseudo_gt = torch.tensor([0, 0, 1e-6, 1e-6], dtype=gt_hbboxes.dtype, device=gt_hbboxes.device).repeat(self.num_instance-num_gts, 1)
-        #     pseudo_ogt = torch.tensor([0, 0, 1e-6, 1e-6, 0], dtype=gt_hbboxes.dtype, device=gt_hbboxes.device).repeat(self.num_instance-num_gts, 1)
-        #     gt_hbboxes = torch.cat([gt_hbboxes, pseudo_gt], dim=0)
-        #     gt_bboxes = torch.cat([gt_bboxes, pseudo_ogt], dim=0)
+        num_gts = gt_hbboxes.shape[0]
+        # 添加伪GT，防止anchor无法匹配num_instance个GT
+        if num_gts < self.num_instance:
+            pseudo_gt = torch.tensor([0, 0, 1e-6, 1e-6], dtype=gt_hbboxes.dtype, device=gt_hbboxes.device).repeat(self.num_instance-num_gts, 1)
+            pseudo_ogt = torch.tensor([0, 0, 1e-6, 1e-6, 0], dtype=gt_hbboxes.dtype, device=gt_hbboxes.device).repeat(self.num_instance-num_gts, 1)
+            gt_hbboxes = torch.cat([gt_hbboxes, pseudo_gt], dim=0)
+            gt_bboxes = torch.cat([gt_bboxes, pseudo_ogt], dim=0)
         assign_result = self.assigner.assign(
             anchors, gt_hbboxes, gt_bboxes_ignore,
-            # None if self.sampling else 
+            None if self.sampling else 
             gt_labels)
         sampling_result = self.sampler.sample(assign_result, anchors,
                                               gt_hbboxes)

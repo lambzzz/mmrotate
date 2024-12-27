@@ -5,7 +5,7 @@
 
 # yapf:disable
 log_config = dict(
-    interval=1,
+    interval=50,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(type='TensorboardLoggerHook')
@@ -33,9 +33,14 @@ mp_start_method = 'fork'
 ############### 
 
 # evaluation
-evaluation = dict(interval=1, metric='mAP')
+evaluation = dict(interval=12, metric='mAP')
 # optimizer
-optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001)
+# optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
+optimizer = dict(type='AdamW',
+    lr=0.00005,
+    betas=(0.9, 0.999),
+    weight_decay=0.05,
+    )
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
@@ -45,7 +50,9 @@ lr_config = dict(
     warmup_ratio=1.0 / 3,
     step=[8, 11])
 runner = dict(type='EpochBasedRunner', max_epochs=12)
-checkpoint_config = dict(interval=1)
+checkpoint_config = dict(interval=12)
+
+
 
 
 
@@ -55,7 +62,6 @@ checkpoint_config = dict(interval=1)
 ##################
 
 angle_version = 'le90'
-num_instances = 2
 model = dict(
     type='OrientedRCNN',
     backbone=dict(
@@ -67,15 +73,16 @@ model = dict(
         norm_cfg=dict(type='BN', requires_grad=True),
         norm_eval=True,
         style='pytorch',
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+        dcn=dict(type='RDCN', deform_groups=1, fallback_on_stride=False),
+        stage_with_dcn=(False, True, True, True)),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
         out_channels=256,
         num_outs=5),
     rpn_head=dict(
-        type='MultiInstanceOrientedRPNHead',
-        num_instance=num_instances,
+        type='OrientedRPNHead',
         in_channels=256,
         feat_channels=256,
         version=angle_version,
@@ -90,10 +97,9 @@ model = dict(
             target_means=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             target_stds=[1.0, 1.0, 1.0, 1.0, 0.5, 0.5]),
         loss_cls=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0, reduction='none'),
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_bbox=dict(
-            type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0, reduction='none')
-    ),
+            type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0)),
     roi_head=dict(
         type='OrientedStandardRoIHead',
         bbox_roi_extractor=dict(
@@ -113,75 +119,68 @@ model = dict(
             num_classes=15,
             bbox_coder=dict(
                 type='DeltaXYWHAOBBoxCoder',
-                # type='DeltaTBLRAOBBoxCoder',
                 angle_range=angle_version,
                 norm_factor=None,
                 edge_swap=True,
                 proj_xy=True,
                 target_means=(.0, .0, .0, .0, .0),
-                target_stds=(0.1, 0.1, 0.2, 0.2, 0.1)
-                # target_stds=(0.1, 0.1, 0.1, 0.1, 0.1)
-            ),
+                target_stds=(0.1, 0.1, 0.2, 0.2, 0.1)),
             reg_class_agnostic=True,
             loss_cls=dict(
                 type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
             loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0))),
-    train_cfg=dict(                                         #rpn 和 rcnn 训练超参数的配置
+    train_cfg=dict(
         rpn=dict(
-            assigner=dict(                                  #分配正负样本分配器的配置
-                type='MultiInstanceAssigner',                      #选用MaxIoUAssigner
-                pos_iou_thr=0.7,                            #IOU >= 0.7 作为正样本
-                neg_iou_thr=0.3,                            #IOU <= 0.3 作为负样本
-                min_pos_iou=0.3,                            #作为正样本的最小IOU阈值
-                num_instance=num_instances,
-                match_low_quality=True,                     #是否匹配低质量的框
-                add_gt_as_proposals=False,
-                ignore_iof_thr=-1),                         #忽略 bbox 的 IoF 阈值
-            sampler=dict(                                   #正负采样器的配置
-                type='MultiInsRandomSampler',                       #选用RandomSampler采样器
-                num=256,                                  #需要提取样本的数量
-                pos_fraction=0.5,                           #正样本占总样本数的比例
-                neg_pos_ub=-1,                              #基于正样本数量的负样本上限，超出上限的忽略，-1表示不忽略
-                add_gt_as_proposals=False),                 #采样后是否添加 GT 作为 proposal
-            allowed_border=0,                               #对有效anchor进行边界填充，-1表示不填充
-            pos_weight=-1,                                  #训练期间正样本权重，-1代表不更改
-            debug=False),                                   #是否设置调试(debug)模式
-        rpn_proposal=dict(                                  #在训练期间生成 proposals 的配置
-            nms_pre=2000,
-            max_per_img=2000,                              #做NMS后要保留的box的数量
-            use_setnms=False,
-            nms=dict(type='nms', iou_threshold=0.8),        #NMS，其阈值为0.7
-            min_bbox_size=0),                               #允许的最小 box 尺寸
-        rcnn=dict(
-            assigner=dict(                                  #RCNN分配正负样本
+            assigner=dict(
                 type='MaxIoUAssigner',
-                pos_iou_thr=0.5,                            #IOU >= 0.5 作为正样本
-                neg_iou_thr=0.5,                            #IOU < 0.5 作为负样本
-                min_pos_iou=0.5,                            #将 box 作为正样本的最小 IoU 阈值
-                match_low_quality=False,                    #是否匹配低质量的框
+                pos_iou_thr=0.7,
+                neg_iou_thr=0.3,
+                min_pos_iou=0.3,
+                match_low_quality=True,
+                ignore_iof_thr=-1),
+            sampler=dict(
+                type='RandomSampler',
+                num=256,
+                pos_fraction=0.5,
+                neg_pos_ub=-1,
+                add_gt_as_proposals=False),
+            allowed_border=0,
+            pos_weight=-1,
+            debug=False),
+        rpn_proposal=dict(
+            nms_pre=2000,
+            max_per_img=2000,
+            nms=dict(type='nms', iou_threshold=0.8),
+            min_bbox_size=0),
+        rcnn=dict(
+            assigner=dict(
+                type='MaxIoUAssigner',
+                pos_iou_thr=0.5,
+                neg_iou_thr=0.5,
+                min_pos_iou=0.5,
+                match_low_quality=False,
                 iou_calculator=dict(type='RBboxOverlaps2D'),
-                ignore_iof_thr=-1),                         #忽略 bbox 的 IoF 阈值，-1表示不忽略
-            sampler=dict(                                   #正负采样器的配置
+                ignore_iof_thr=-1),
+            sampler=dict(
                 type='RRandomSampler',
-                num=512,                                  #需要提取样本的数量
-                pos_fraction=0.25,                          #正样本占总样本数的比例
-                neg_pos_ub=-1,                              #基于正样本数量的负样本上限，超出上限的忽略，-1表示不忽略
-                add_gt_as_proposals=True),                  #采样后是否添加 GT 作为 proposal
-            pos_weight=-1,                                  #训练期间正样本权重，-1代表不更改
+                num=512,
+                pos_fraction=0.25,
+                neg_pos_ub=-1,
+                add_gt_as_proposals=True),
+            pos_weight=-1,
             debug=False)),
     test_cfg=dict(
         rpn=dict(
             nms_pre=2000,
             max_per_img=2000,
-            use_setnms=True,
             nms=dict(type='nms', iou_threshold=0.8),
             min_bbox_size=0),
         rcnn=dict(
             nms_pre=2000,
             min_bbox_size=0,
-            score_thr=0.05,                                 #bbox的分数阈值
+            score_thr=0.05,
             nms=dict(iou_thr=0.1),
-            max_per_img=2000)))                             
+            max_per_img=2000)))
 
 
 
@@ -193,7 +192,7 @@ model = dict(
 
 # dataset settings
 dataset_type = 'DOTADataset'
-data_root = '/root/autodl-tmp/DOTA/'
+data_root = '/root/autodl-tmp/split_ss_dota/'
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
@@ -226,27 +225,25 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=4,
-    workers_per_gpu=4,
+    train_dataloader=dict(samples_per_gpu=4, workers_per_gpu=4),
+    val_dataloader=dict(samples_per_gpu=4, workers_per_gpu=4),
+    test_dataloader=dict(samples_per_gpu=4, workers_per_gpu=4),
     train=dict(
         type=dataset_type,
-        # classes=classes,
-        ann_file=data_root + 'train/labelTxt-v1.0/',
-        img_prefix=data_root + 'train/images/images/',
+        ann_file=data_root + 'trainval/annfiles/',
+        img_prefix=data_root + 'trainval/images/',
         pipeline=train_pipeline,
         version=angle_version),
     val=dict(
         type=dataset_type,
-        # classes=classes,
-        ann_file=data_root + 'val/labelTxt-v1.0/',
-        img_prefix=data_root + 'val/images/images/',
+        ann_file=data_root + 'trainval/annfiles/',
+        img_prefix=data_root + 'trainval/images/',
         pipeline=test_pipeline,
         version=angle_version),
     test=dict(
         type=dataset_type,
-        # classes=classes,
-        ann_file=data_root + 'test/images/images/',
-        img_prefix=data_root + 'test/images/images/',
+        ann_file=data_root + 'test/images/',
+        img_prefix=data_root + 'test/images/',
         pipeline=test_pipeline,
         version=angle_version))
 

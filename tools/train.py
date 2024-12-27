@@ -20,6 +20,8 @@ from mmrotate.datasets import build_dataset
 from mmrotate.models import build_detector
 from mmrotate.utils import collect_env, get_root_logger, setup_multi_processes
 
+# import os
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
@@ -47,7 +49,10 @@ def parse_args():
         nargs='+',
         help='ids of gpus to use '
         '(only applicable to non-distributed training)')
-    parser.add_argument('--seed', type=int, default=0, help='random seed')
+    parser.add_argument('--seed', type=int, 
+                        # default=None, 
+                        default=0, 
+                        help='random seed')
     parser.add_argument(
         '--diff-seed',
         action='store_true',
@@ -100,7 +105,7 @@ def main():
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
-        cfg.work_dir = osp.join('../work_dirs',
+        cfg.work_dir = osp.join('./work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
