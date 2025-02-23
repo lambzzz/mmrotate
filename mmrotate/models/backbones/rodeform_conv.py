@@ -39,38 +39,83 @@ class DeformConv2dPack(DeformConv2d):
 
     _version = 2
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, use_rotate=True, use_expand=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.conv_theta = nn.Conv2d(
-            self.in_channels,
-            self.deform_groups,
-            kernel_size=self.kernel_size,
-            stride=_pair(self.stride),
-            padding=_pair(self.padding),
-            dilation=_pair(self.dilation),
-            bias=True)
-        self.conv_alpha = nn.Conv2d(
-            self.in_channels,
-            self.deform_groups,
-            kernel_size=self.kernel_size,
-            stride=_pair(self.stride),
-            padding=_pair(self.padding),
-            dilation=_pair(self.dilation),
-            bias=True)
+        self.use_rotate = use_rotate
+        self.use_expand = use_expand
+        if self.use_rotate:
+            self.conv_theta = nn.Conv2d(
+                self.in_channels,
+                self.deform_groups,
+                kernel_size=self.kernel_size,
+                stride=_pair(self.stride),
+                padding=_pair(self.padding),
+                dilation=_pair(self.dilation),
+                bias=True)
+            
+            # self.conv_sin = nn.Conv2d(
+            #     self.in_channels,
+            #     self.deform_groups,
+            #     kernel_size=self.kernel_size,
+            #     stride=_pair(self.stride),
+            #     padding=_pair(self.padding),
+            #     dilation=_pair(self.dilation),
+            #     bias=True)
+            # self.conv_cos = nn.Conv2d(
+            #     self.in_channels,
+            #     self.deform_groups,
+            #     kernel_size=self.kernel_size,
+            #     stride=_pair(self.stride),
+            #     padding=_pair(self.padding),
+            #     dilation=_pair(self.dilation),
+            #     bias=True)
+
+            self.act_func_theta = nn.Tanh()
+        else:
+            self.conv_theta = None
+        if self.use_expand:
+            self.conv_alpha = nn.Conv2d(
+                self.in_channels,
+                self.deform_groups,
+                kernel_size=self.kernel_size,
+                stride=_pair(self.stride),
+                padding=_pair(self.padding),
+                dilation=_pair(self.dilation),
+                bias=True)
+            self.act_func_alpha = nn.Sigmoid()
+        else:
+            self.conv_alpha = None
+
         self.init_offset()
 
     def init_offset(self):
-        self.conv_theta.weight.data.zero_()
-        self.conv_theta.bias.data.zero_()
-        self.conv_alpha.weight.data.zero_()
-        self.conv_alpha.bias.data.zero_()
+        if self.use_rotate:
+            self.conv_theta.weight.data.zero_()
+            self.conv_theta.bias.data.zero_()
+            # self.conv_sin.weight.data.fill_(0)
+            # self.conv_cos.weight.data.fill_(0)
+            # self.conv_sin.bias.data.fill_(0)
+            # self.conv_cos.bias.data.fill_(5)
+        if self.use_expand:
+            self.conv_alpha.weight.data.zero_()
+            self.conv_alpha.bias.data.zero_()
 
     def forward(self, x: Tensor) -> Tensor:  # type: ignore
         theta = self.conv_theta(x)
-        theta = torch.tanh(theta) * (math.pi / 2)
+        theta = self.act_func_theta(theta) * math.pi / 2
         alphas = self.conv_alpha(x)
-        alphas = torch.sigmoid(alphas) * 2
-        offset = _get_offset(theta, alphas).contiguous()
+        alphas = self.act_func_alpha(alphas) * 2
+        # theta = alphas.new_zeros(alphas.size(0), self.deform_groups, alphas.size(2), alphas.size(3))
+        # alphas = theta.new_ones(theta.size(0), self.deform_groups, theta.size(2), theta.size(3))
+        offset = _get_offset(theta, alphas)
+
+        # sin_theta = self.conv_sin(x)
+        # cos_theta = self.conv_cos(x)
+        # sin_theta = self.act_func_theta(sin_theta)
+        # cos_theta = torch.sigmoid(cos_theta)
+        # theta = torch.cat([sin_theta, cos_theta], dim=1)
+        # alphas = theta.new_ones(theta.size(0), self.deform_groups, theta.size(2), theta.size(3))
+        # offset = _get_offset_sincos(theta, alphas)
         return deform_conv2d(x, offset, self.weight, self.stride, self.padding,
                              self.dilation, self.groups, self.deform_groups,
                              False, self.im2col_step)
@@ -112,18 +157,20 @@ def _get_offset(theta: Tensor, alphas: Tensor) -> Tensor:
     """Get offset from theta and alphas.
 
     Args:
-        theta (Tensor): The theta tensor with shape (B, 1, H, W).
-        alphas (Tensor): The alphas tensor with shape (B, 1, H, W).
+        theta (Tensor): The theta tensor with shape (B, G, H, W).
+        alphas (Tensor): The alphas tensor with shape (B, G, H, W).
 
     Returns:
-        Tensor: The offset.
+        Tensor: The offset tensor with shape (B, G*18, H, W).
     """
-    B, _, H, W = theta.size()
-    coors = torch.mul(alphas, origin_coors)
-    coors = coors.permute(0, 2, 3, 1).reshape(-1, 9, 2)
-    rotated_coors = _batch_rotate_coordinates(coors, theta.reshape(-1))
-    rotated_coors = rotated_coors.reshape(B, H, W, 18).permute(0, 3, 1, 2)
-    offset = rotated_coors - origin_coors
+    B, G, H, W = theta.size()
+    origin_coors_expanded = origin_coors.repeat(1, G, 1, 1) # shape: [1, 18, 1, 1] -> [1, G*18, 1, 1]
+    alphas = alphas.reshape(B, G, 1, H, W).repeat(1, 1, 18, 1, 1).reshape(B, G*18, H, W)
+    coors = torch.mul(alphas, origin_coors_expanded) # shape: [B, G*18, H, W]
+    coors = coors.permute(0, 2, 3, 1).reshape(-1, 9, 2) # [B, H, W, G*18] -> [B*H*W*G, 9, 2]
+    rotated_coors = _batch_rotate_coordinates(coors, theta.permute(0, 2, 3, 1).reshape(-1))
+    rotated_coors = rotated_coors.reshape(B, H, W, G*18).permute(0, 3, 1, 2).contiguous()   # [B*H*W*G, 9, 2] -> [B, G*18, H, W]
+    offset = rotated_coors - origin_coors_expanded
     
     return offset
 
@@ -151,3 +198,42 @@ def _batch_rotate_coordinates(coors: Tensor, angles: Tensor) -> torch.Tensor:
     rotated_coors = torch.matmul(coors, rotation_matrices)
 
     return rotated_coors
+
+# def normalize_sin_cos(sin_cos):
+#     sin_theta, cos_theta = sin_cos[:, 0], sin_cos[:, 1]
+#     norm = torch.sqrt(sin_theta**2 + cos_theta**2 + 1e-8)  # 避免除零
+#     sin_theta = sin_theta / norm
+#     cos_theta = cos_theta / norm
+#     return sin_theta, cos_theta
+
+# def construct_rotation_matrix(sin_theta, cos_theta):
+#     # 构造2D旋转矩阵
+#     rotation_matrix = torch.stack([
+#         torch.stack([cos_theta, -sin_theta], dim=-1),
+#         torch.stack([sin_theta, cos_theta], dim=-1)
+#     ], dim=-2)  # shape: [batch_size, 2, 2]
+#     return rotation_matrix
+
+# def _get_offset_sincos(sincos: Tensor, alphas: Tensor) -> Tensor:
+#     """Get offset from theta and alphas.
+
+#     Args:
+#         sincos (Tensor): The sincos tensor with shape (B, 2, H, W).
+#         alphas (Tensor): The alphas tensor with shape (B, 1, H, W).
+
+#     Returns:
+#         Tensor: The offset.
+#     """
+#     B, _, H, W = sincos.size()
+#     coors = torch.mul(alphas, origin_coors)
+#     coors = coors.permute(0, 2, 3, 1).reshape(-1, 9, 2)
+#     sincos = sincos.permute(0, 2, 3, 1).reshape(-1, 2)
+#     sin_theta, cos_theta = normalize_sin_cos(sincos)
+#     rotation_matrix = construct_rotation_matrix(sin_theta, cos_theta)
+
+#     rotated_coors = torch.matmul(coors, rotation_matrix)
+#     rotated_coors = rotated_coors.reshape(B, H, W, 18).permute(0, 3, 1, 2).contiguous()
+#     offset = rotated_coors - origin_coors
+    
+#     return offset
+

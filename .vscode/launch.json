@@ -13,7 +13,7 @@
             "justMyCode": false,
             "args": [
                     // "fiberconfig/SetOriented_RPN/multi_instance_oriented_rcnn.py",
-                    "dotaconfig/FPNformer/fpnformer_DOTA.py",
+                    "dotaconfig/RDCN/Oriented_rcnn_rdcn_DOTA.py",
                     // "--resume-from",
                     // "work_dirs/multi_instance_oriented_crowddet/epoch_60.pth"
                 ] 
@@ -34,8 +34,8 @@
 //             "program": "./tools/test.py",
 //             "console": "integratedTerminal",
 //             "justMyCode": false,
-//             "args": ["dotaconfig/RoResNet/roresnet_rcnn_DOTA.py",
-//                     "work_dirs/roresnet_rcnn_DOTA/epoch_12.pth",
+//             "args": ["dotaconfig/RDCN/Oriented_rcnn_rdcn_DOTA.py",
+//                     "work_dirs/Oriented_rcnn_rdcn_DOTA/epoch_12.pth",
 //                     "--format-only",] 
 //         }
 //     ]

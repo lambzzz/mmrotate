@@ -5,7 +5,7 @@ from mmcv.cnn.utils.weight_init import (constant_init, normal_init,
                                         trunc_normal_init)
 from ..builder import ROTATED_BACKBONES
 from mmcv.runner import BaseModule
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.layers import DropPath, to_2tuple, trunc_normal_
 import math
 from functools import partial
 import warnings
