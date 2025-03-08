@@ -33,7 +33,7 @@ mp_start_method = 'fork'
 ############### 
 
 # evaluation
-evaluation = dict(interval=1, metric='mAP')
+evaluation = dict(interval=12, metric='mAP')
 # optimizer
 # optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001)
 optimizer = dict(type='AdamW',
@@ -99,7 +99,7 @@ model = dict(
         loss_bbox=dict(
             type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0)),
     roi_head=dict(
-        type='OrientedStandardRoIHead',
+        type='OrientedStandardRoIHeadimTED',
         bbox_roi_extractor=dict(
             type='RotatedSingleRoIExtractor',
             roi_layer=dict(
@@ -107,19 +107,25 @@ model = dict(
                 out_size=7,
                 sample_num=2,
                 clockwise=True),
-            out_channels=384,
+            out_channels=256,
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
-            type='RotatedMAEBBoxHead',
+            type='RotatedMAEBBoxHeadSTDC',
             init_cfg=dict(type='Pretrained', checkpoint=pretrained),
             use_checkpoint=True,
-            in_channels=384,
+            in_channels=256,
             img_size=224,
             patch_size=16, 
             embed_dim=256, 
             depth=4,
             num_heads=8, 
             mlp_ratio=4., 
+
+            dc_mode_str_list = ['', 'XY', 'A', 'WH'],
+            num_convs_list   = [0, 3, 2, 1],
+            am_mode_str_list = ['', 'V', 'V', 'V'],
+            rois_mode        = 'rbbox',
+
             num_classes=15,
             bbox_coder=dict(
                 type='DeltaXYWHAOBBoxCoder',

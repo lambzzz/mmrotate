@@ -290,7 +290,7 @@ class BlockSTDC(nn.Module):
             theta_c = delta2theta(rois=rois[:, 1:], deltas=deltas, rois_mode=self.rois_mode)
             theta_c = theta_c.unsqueeze(1).expand(-1, H, -1).reshape(B * H, 2, 3)
 
-            grid = F.affine_grid(theta_c, x_ones.size())
+            grid = F.affine_grid(theta_c, x_ones.size())                    # [B * H, A, A, 2]
             grid = grid.type(x_ones.type())                                 # avoid fp16/fp32 confusion
             actv_mask = F.grid_sample(x_ones, grid) # + x_ones * 0.1        # B * H, I, A, A
 

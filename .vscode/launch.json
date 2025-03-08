@@ -13,7 +13,7 @@
             "justMyCode": false,
             "args": [
                     // "fiberconfig/SetOriented_RPN/multi_instance_oriented_rcnn.py",
-                    "dotaconfig/RDCN/Oriented_rcnn_rdcn_DOTA.py",
+                    "dotaconfig/STD/Oriented_imTED_DOTA.py",
                     // "--resume-from",
                     // "work_dirs/multi_instance_oriented_crowddet/epoch_60.pth"
                 ] 

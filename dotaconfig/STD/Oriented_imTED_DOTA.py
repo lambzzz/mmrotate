@@ -35,7 +35,7 @@ mp_start_method = 'fork'
 # evaluation
 evaluation = dict(interval=12, metric='mAP')
 # optimizer
-# optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
+# optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001)
 optimizer = dict(type='AdamW',
     lr=0.0001,
     betas=(0.9, 0.999),
@@ -60,7 +60,7 @@ checkpoint_config = dict(interval=12)
 ##################
 # model settings #
 ##################
-
+pretrained = './work_dirs/pretrain/mae_vit_small_800e.pth'
 angle_version = 'le90'
 model = dict(
     type='OrientedRCNN',
@@ -73,9 +73,7 @@ model = dict(
         norm_cfg=dict(type='BN', requires_grad=True),
         norm_eval=True,
         style='pytorch',
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
-        dcn=dict(type='DCN', deform_groups=1, fallback_on_stride=False),
-        stage_with_dcn=(False, True, True, True)),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -101,7 +99,7 @@ model = dict(
         loss_bbox=dict(
             type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0)),
     roi_head=dict(
-        type='OrientedStandardRoIHead',
+        type='OrientedStandardRoIHeadimTED',
         bbox_roi_extractor=dict(
             type='RotatedSingleRoIExtractor',
             roi_layer=dict(
@@ -112,10 +110,16 @@ model = dict(
             out_channels=256,
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
-            type='RotatedShared2FCBBoxHead',
+            type='RotatedMAEBBoxHead',
+            init_cfg=dict(type='Pretrained', checkpoint=pretrained),
+            use_checkpoint=True,
             in_channels=256,
-            fc_out_channels=1024,
-            roi_feat_size=7,
+            img_size=224,
+            patch_size=16, 
+            embed_dim=256, 
+            depth=4,
+            num_heads=8, 
+            mlp_ratio=4., 
             num_classes=15,
             bbox_coder=dict(
                 type='DeltaXYWHAOBBoxCoder',
