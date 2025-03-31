@@ -1,131 +1,229 @@
 import torch
 import torch.nn as nn
-from torch.nn.modules.utils import _pair as to_2tuple
-from mmcv.cnn.utils.weight_init import (constant_init, normal_init,
-                                        trunc_normal_init)
-from ....builder import ROTATED_BACKBONES
-from mmcv.runner import BaseModule
-from timm.layers import DropPath, to_2tuple, trunc_normal_
-import math
-from functools import partial
-import warnings
-from mmcv.cnn import build_norm_layer
+import torch.nn.functional as F
+from torch import Tensor
 
-class Mlp(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+from mmcv.cnn import ConvModule
+from mmcv.ops import DeformConv2d, deform_conv2d
+
+from .delta2theta import delta2theta
+from .van_block import VANBlock
+
+
+class LayerReg(nn.Module):
+    """x has shape (B, C, H, W)
+
+    reshape -> B, C, A, A
+    conv3x3 -> B, C, (A - 2), (A - 2)
+    conv3x3 -> B, C, (A - 4), (A - 4)
+    conv3x3 -> B, C, (A - 6), (A - 6)
+    flatten -> B, F
+    fc      -> B, out_channels
+    """
+    def __init__(self, in_channels=256, out_channels=2, reg_channels=256, num_convs=0, feat_size=7):
         super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Conv2d(in_features, hidden_features, 1)
-        self.dwconv = DWConv(hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Conv2d(hidden_features, out_features, 1)
-        self.drop = nn.Dropout(drop)
+        self.num_convs = num_convs
+        self.feat_size = feat_size
+        self.with_avg_pool = False
+        self.double_ConvCh = False
+
+        if self.num_convs > 0:
+            self.norms = nn.ModuleList()
+            self.convs = nn.ModuleList()
+            self.relu = nn.ReLU(True)
+            for i in range(self.num_convs):
+                in_ch = in_channels if i == 0 else out_ch
+                # out_ch = in_ch*2 if self.double_ConvCh else in_ch
+                out_ch = reg_channels
+                self.norms.append(nn.GroupNorm(32, in_ch))
+                self.convs.append(nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=0))
+            self.last_feat_area = (feat_size - num_convs * 2) ** 2
+
+        if self.with_avg_pool:
+            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # in_channels = in_channels * (2**self.num_convs) if self.double_ConvCh else in_channels
+        # conv_out_channels = in_channels if self.with_avg_pool else in_channels * self.last_feat_area
+        conv_out_channels = reg_channels * self.last_feat_area
+        self.norm_reg = nn.LayerNorm(conv_out_channels)
+        self.fc_reg = nn.Linear(conv_out_channels, out_channels)
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.dwconv(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
-        return x
 
-
-class LKA(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.conv0 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
-        self.conv_spatial = nn.Conv2d(dim, dim, 7, stride=1, padding=9, groups=dim, dilation=3)
-        self.conv1 = nn.Conv2d(dim, dim, 1)
-
-
-    def forward(self, x):
-        u = x.clone()        
-        attn = self.conv0(x)
-        attn = self.conv_spatial(attn)
-        attn = self.conv1(attn)
-
-        return u * attn
-
-
-
-class Attention(nn.Module):
-    def __init__(self, d_model):
-        super().__init__()
-
-        self.proj_1 = nn.Conv2d(d_model, d_model, 1)
-        self.activation = nn.GELU()
-        self.spatial_gating_unit = LKA(d_model)
-        self.proj_2 = nn.Conv2d(d_model, d_model, 1)
-
-    def forward(self, x):
-        shorcut = x.clone()
-        x = self.proj_1(x)
-        x = self.activation(x)
-        x = self.spatial_gating_unit(x)
-        x = self.proj_2(x)
-        x = x + shorcut
-        return x
-
+        if self.num_convs > 0:
+            B, C, H, W = x.shape
+            for i in range(self.num_convs):
+                norm = self.norms[i]
+                conv = self.convs[i]
+                x = self.relu(norm(conv(x)))
+            # x = x.reshape(B, C, self.last_feat_area).transpose(-2, -1)
+        if self.with_avg_pool:
+            x = self.avgpool(x)
+        bbox_pr = self.fc_reg(self.norm_reg(x.flatten(1)))
+        return bbox_pr
+    
 
 class Block(nn.Module):
     def __init__(self, 
-                 dim, 
-                 mlp_ratio=4., 
-                 drop=0.,
-                 drop_path=0., 
-                 act_layer=nn.GELU, 
-                 norm_cfg=dict(type='BN', requires_grad=True)):
+                 in_channels,
+                 out_channels, 
+                 reg_channels,
+                 num_convs=0,
+                 predict_cfg="",
+                 complement_cfg=""):
         
         super().__init__()
-        if norm_cfg:
-            self.norm1 = build_norm_layer(norm_cfg, dim)[1]
-            self.norm2 = build_norm_layer(norm_cfg, dim)[1]
-        else:
-            self.norm1 = nn.BatchNorm2d(dim)
-            self.norm2 = nn.BatchNorm2d(dim)
-        self.attn = Attention(dim)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-        layer_scale_init_value = 1e-2            
-        self.layer_scale_1 = nn.Parameter(
-            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.layer_scale_2 = nn.Parameter(
-            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        predict_channels = len(predict_cfg)
+        self.predict_cfg = predict_cfg
+        self.complement_cfg = complement_cfg
+
+        if predict_channels > 0:
+            self.reg_branch = LayerReg(in_channels=in_channels, 
+                                    out_channels=predict_channels, 
+                                    reg_channels=reg_channels,
+                                    num_convs=num_convs)
+
+        # self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        # self.norm = nn.GroupNorm(32, out_channels)
+        # self.actfunc = nn.ReLU(True)
+        self.mixer = VANBlock(in_channels, mlp_ratio=4)
         
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
-
-    def forward(self, x):
-        x = x + self.drop_path(self.layer_scale_1.unsqueeze(-1).unsqueeze(-1) * self.attn(self.norm1(x)))
-        x = x + self.drop_path(self.layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.mlp(self.norm2(x)))
-        return x
 
 
+    def forward(self, x, rois=None, deltas=None):
+        B, C, W, H = x.shape
 
-class DWConv(nn.Module):
-    def __init__(self, dim=768):
-        super(DWConv, self).__init__()
-        self.dwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
+        if len(self.predict_cfg) > 0:
+            bbox_pr = self.reg_branch(x)
+        else:
+            bbox_pr = torch.zeros([B, 0], dtype=x.dtype, device=x.device, requires_grad=False)
 
-    def forward(self, x):
-        x = self.dwconv(x)
-        return x
+        if deltas is None:
+            deltas = torch.zeros([B, 5], dtype=x.dtype, device=x.device, requires_grad=False)
+
+        if 'XY' in self.predict_cfg:
+            deltas[:, :2] = bbox_pr
+        if 'WH' in self.predict_cfg:
+            deltas[:, 2:4] = bbox_pr
+        if 'A'  in self.predict_cfg:
+            deltas[:, 4:] = bbox_pr
+
+        # theta_c = delta2theta(rois=rois[:, 1:], deltas=deltas, rois_mode='rbbox')
+        # theta_c = theta_c.reshape(-1, 2, 3)
+
+        # mask activation
+        # x_ones = torch.ones([B, C, W, H], dtype=x.dtype, device=x.device, requires_grad=False)
+        # grid = F.affine_grid(theta_c, x_ones.size())                    # 
+        # grid = grid.type(x_ones.type())                                 # avoid fp16/fp32 confusion
+        # actv_mask = F.grid_sample(x_ones, grid) # + x_ones * 0.1        # 
+
+        # # feature alignment
+        # grid = F.affine_grid(theta_c, x.size(), align_corners=False)
+        # x_aligned = F.grid_sample(x, grid, mode='bilinear', padding_mode='border', align_corners=False)
 
 
+        # x = self.conv(x)
+        # x = self.norm(x)
+        # x = self.actfunc(x)
+        x = self.mixer(x)
+
+        return x, bbox_pr
+    
+
+
+class DeformConv2dPack(DeformConv2d):
+    """A Deformable Conv Encapsulation that acts as normal Conv layers.
+
+    The offset tensor is like `[y0, x0, y1, x1, y2, x2, ..., y8, x8]`.
+    The spatial arrangement is like:
+
+    .. code:: text
+
+        (x0, y0) (x1, y1) (x2, y2)
+        (x3, y3) (x4, y4) (x5, y5)
+        (x6, y6) (x7, y7) (x8, y8)
+
+    Args:
+        in_channels (int): Same as nn.Conv2d.
+        out_channels (int): Same as nn.Conv2d.
+        kernel_size (int or tuple[int]): Same as nn.Conv2d.
+        stride (int or tuple[int]): Same as nn.Conv2d.
+        padding (int or tuple[int]): Same as nn.Conv2d.
+        dilation (int or tuple[int]): Same as nn.Conv2d.
+        groups (int): Same as nn.Conv2d.
+        bias (bool or str): If specified as `auto`, it will be decided by the
+            norm_cfg. Bias will be set as True if norm_cfg is None, otherwise
+            False.
+    """
+
+    _version = 2
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.origin_coors = torch.tensor(
+            [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 0], [0, 1], [1, -1], [1, 0],
+                [1, 1]],
+            dtype=torch.float32, device='cuda' if torch.cuda.is_available() else 'cpu')
+        self.origin_coors_x = self.origin_coors[:, 1].reshape(1, 9, 1, 1)
+        self.origin_coors_y = self.origin_coors[:, 0].reshape(1, 9, 1, 1)
+        self.origin_coors = self.origin_coors.reshape(1, 18, 1, 1)
+
+    def forward(self, x: Tensor, offset: Tensor) -> Tensor:  # type: ignore
+
+        return deform_conv2d(x, offset, self.weight, self.stride, self.padding,
+                             self.dilation, self.groups, self.deform_groups,
+                             False, self.im2col_step)
+
+
+    def _get_offset(self, theta: Tensor, alphas_x: Tensor, alpha_y: Tensor) -> Tensor:
+        """Get offset from theta and alphas.
+
+        Args:
+            theta (Tensor): The theta tensor with shape (B, G, H, W).
+            alphas_x (Tensor): The alphas_x tensor with shape (B, G, H, W).
+            alpha_y (Tensor): The alpha_y tensor with shape (B, G, H, W).
+
+        Returns:
+            Tensor: The offset tensor with shape (B, G*18, H, W).
+        """
+        B, G, H, W = theta.size()
+        origin_coors_expanded = self.origin_coors.repeat(1, G, 1, 1) # shape: [1, 18, 1, 1] -> [1, G*18, 1, 1]
+        origin_coors_expanded_x = self.origin_coors_x.repeat(1, G, 1, 1)
+        origin_coors_expanded_y = self.origin_coors_y.repeat(1, G, 1, 1)
+        alphas_x = alphas_x.reshape(B, G, 1, H, W).repeat(1, 1, 9, 1, 1).reshape(B, G*9, H, W)    # [B, G, H, W] -> [B, G, 1, H, W] -> [B, G, 9, H, W] -> [B, G*9, H, W]
+        alphas_y = alpha_y.reshape(B, G, 1, H, W).repeat(1, 1, 9, 1, 1).reshape(B, G*9, H, W)    # [B, G, H, W] -> [B, G, 1, H, W] -> [B, G, 9, H, W] -> [B, G*9, H, W]
+        coors_x = torch.mul(alphas_x, origin_coors_expanded_x) # shape: [B, G*9, H, W]
+        coors_y = torch.mul(alphas_y, origin_coors_expanded_y) # shape: [B, G*9, H, W]
+        coors = torch.stack((coors_y, coors_x), dim=2).reshape(B, G*18, H, W)   # shape: [B, G*18, H, W]
+
+        coors = coors.permute(0, 2, 3, 1).reshape(-1, 9, 2) # [B, H, W, G*18] -> [B*H*W*G, 9, 2]
+        rotated_coors = _batch_rotate_coordinates(coors, theta.permute(0, 2, 3, 1).reshape(-1))
+        rotated_coors = rotated_coors.reshape(B, H, W, G*18).permute(0, 3, 1, 2).contiguous()   # [B*H*W*G, 9, 2] -> [B, G*18, H, W]
+        offset = rotated_coors - origin_coors_expanded
+        
+        return offset
+
+def _batch_rotate_coordinates(coors: Tensor, angles: Tensor) -> torch.Tensor:
+    """Rotate coordinates by a given angle.
+
+    Args:
+        coors (torch.Tensor): The coordinates tensor with shape (B, N, 2).
+        angles (torch.Tensor): The rotation angles tensor with shape (B,).
+
+    Returns:
+        torch.Tensor: The rotated coordinates.
+    """
+    batch_size = coors.size(0)
+    num_points = coors.size(1)
+
+    # Create rotation matrices for each angle in the batch
+    rotation_matrices = torch.zeros((batch_size, 2, 2), dtype=torch.float32, device=coors.device)
+    rotation_matrices[:, 0, 0] = torch.cos(angles)
+    rotation_matrices[:, 0, 1] = -torch.sin(angles)
+    rotation_matrices[:, 1, 0] = torch.sin(angles)
+    rotation_matrices[:, 1, 1] = torch.cos(angles)
+
+    # Rotate the coordinates
+    rotated_coors = torch.matmul(coors, rotation_matrices)
+
+    return rotated_coors

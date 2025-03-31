@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
+from functools import partial
 from mmcv.cnn import ConvModule
 from mmcv.runner import force_fp32
 from mmdet.models.losses import accuracy
@@ -18,92 +19,44 @@ class ConvFormerHead(RotatedBBoxHead):
 
     .. code-block:: none
 
-                                    /-> cls convs -> cls fcs -> cls
-        shared convs -> shared fcs
-                                    \-> reg convs -> reg fcs -> reg
+        ConvFormer -> ConvFormer -> ConvFormer -> cls
+            \             \             \-> reg_HW
+             \             \-> reg_A
+              \-> reg_XY
 
     Args:
-        num_shared_convs (int, optional): number of ``shared_convs``.
-        num_shared_fcs (int, optional): number of ``shared_fcs``.
-        num_cls_convs (int, optional): number of ``cls_convs``.
-        num_cls_fcs (int, optional): number of ``cls_fcs``.
-        num_reg_convs (int, optional): number of ``reg_convs``.
-        num_reg_fcs (int, optional): number of ``reg_fcs``.
-        conv_out_channels (int, optional): output channels of convolution.
-        fc_out_channels (int, optional): output channels of fc.
-        conv_cfg (dict, optional): Config of convolution.
-        norm_cfg (dict, optional): Config of normalization.
-        init_cfg (dict, optional): Config of initialization.
+        num_blocks (int): Number of blocks in the head. Default: 3.
+        feat_channels (int): Number of channels in the feature map. Default: 1024.
+        predict_seq (list[str]): Sequence of prediction. Default: ['XY', 'A', 'WH'].
     """
 
     def __init__(self,
-                 num_shared_convs=4,
-                 num_shared_fcs=0,
-                 num_cls_convs=0,
-                 num_cls_fcs=0,
-                 num_reg_convs=0,
-                 num_reg_fcs=0,
-                 conv_out_channels=256,
-                 fc_out_channels=1024,
-                 conv_cfg=None,
-                 norm_cfg=None,
-                 init_cfg=None,
-                 drop_rate=0., # add for convformer
-                 drop_path_rate=0.,
+                 num_blocks=3,
+                 feat_channels=256,
+                 reg_channels=256,
+                 predict_cfgs=['XY', 'A', 'WH'],
                  *args,
                  **kwargs):
         super(ConvFormerHead, self).__init__(
             *args, 
-            init_cfg=init_cfg, 
-            with_avg_pool=True,
+            # with_avg_pool=True,
             **kwargs)
-        assert (num_shared_convs + num_shared_fcs + num_cls_convs +
-                num_cls_fcs + num_reg_convs + num_reg_fcs > 0)
-        if num_cls_convs > 0 or num_reg_convs > 0:
-            assert num_shared_fcs == 0
-        if not self.with_cls:
-            assert num_cls_convs == 0 and num_cls_fcs == 0
-        if not self.with_reg:
-            assert num_reg_convs == 0 and num_reg_fcs == 0
-        self.num_shared_convs = num_shared_convs
-        self.num_shared_fcs = num_shared_fcs
-        self.num_cls_convs = num_cls_convs
-        self.num_cls_fcs = num_cls_fcs
-        self.num_reg_convs = num_reg_convs
-        self.num_reg_fcs = num_reg_fcs
-        self.conv_out_channels = conv_out_channels
-        self.fc_out_channels = fc_out_channels
-        self.conv_cfg = conv_cfg
-        self.norm_cfg = norm_cfg
 
-        self.drop_rate = drop_rate
-        self.drop_path_rate = drop_path_rate
+        # self.PWConv = nn.Conv2d(self.in_channels, feat_channels, kernel_size=1)
+        self.blocks = nn.ModuleList(
+            [Block(in_channels=feat_channels, 
+                   out_channels=feat_channels, 
+                   reg_channels=reg_channels,
+                   num_convs=num_blocks-i, 
+                   predict_cfg=predict_cfgs[i]) 
+            for i in range(num_blocks)]
+        )
 
-        # add shared convs and fcs
-        self.shared_convs, self.shared_fcs, last_layer_dim = \
-            self._add_conv_fc_branch(
-                self.num_shared_convs, self.num_shared_fcs, self.in_channels,
-                True)
-        self.shared_out_channels = last_layer_dim
-
-        # add cls specific branch
-        self.cls_convs, self.cls_fcs, self.cls_last_dim = \
-            self._add_conv_fc_branch(
-                self.num_cls_convs, self.num_cls_fcs, self.shared_out_channels)
-
-        # add reg specific branch
-        self.reg_convs, self.reg_fcs, self.reg_last_dim = \
-            self._add_conv_fc_branch(
-                self.num_reg_convs, self.num_reg_fcs, self.shared_out_channels)
-
-        if self.num_shared_fcs == 0 and not self.with_avg_pool:
-            if self.num_cls_fcs == 0:
-                self.cls_last_dim *= self.roi_feat_area
-            if self.num_reg_fcs == 0:
-                self.reg_last_dim *= self.roi_feat_area
-
-        self.relu = nn.ReLU(inplace=True)
         # reconstruct fc_cls and fc_reg since input channels are changed
+        self.cls_last_dim = feat_channels if self.with_avg_pool else feat_channels*self.roi_feat_area
+        self.layernorm = nn.LayerNorm(self.cls_last_dim)
+        # self.cls_fc = nn.Linear(self.cls_last_dim, 1024)
+        self.relu = nn.ReLU(inplace=True)
         if self.with_cls:
             if self.custom_cls_channels:
                 cls_channels = self.loss_cls.get_cls_channels(self.num_classes)
@@ -114,100 +67,47 @@ class ConvFormerHead(RotatedBBoxHead):
                 in_features=self.cls_last_dim,
                 out_features=cls_channels)
         if self.with_reg:
-            out_dim_reg = (5 if self.reg_class_agnostic else 5 *
-                           self.num_classes)
-            self.fc_reg = build_linear_layer(
-                self.reg_predictor_cfg,
-                in_features=self.reg_last_dim,
-                out_features=out_dim_reg)
+            del self.fc_reg
 
-        if init_cfg is None:
-            self.init_cfg += [
-                dict(
-                    type='Xavier',
-                    layer='Linear',
-                    override=[
-                        dict(name='shared_fcs'),
-                        dict(name='cls_fcs'),
-                        dict(name='reg_fcs')
-                    ])
-            ]
+        self.init_cfg = [
+            dict(
+                type='Normal', std=0.01, override=dict(name='fc_cls'))
+        ]
+        # self.init_cfg += [
+        #     dict(
+        #         type='Xavier',
+        #         layer='Linear',
+        #         override=[
+        #             dict(name='shared_fcs'),
+        #             dict(name='cls_fcs'),
+        #             dict(name='reg_fcs')
+        #         ])
+        # ]
 
-    def _add_conv_fc_branch(self,
-                            num_branch_convs,
-                            num_branch_fcs,
-                            in_channels,
-                            is_shared=False):
-        """Add shared or separable branch.
 
-        convs -> avg pool (optional) -> fcs
-        """
-        last_layer_dim = in_channels
-        # add branch specific conv layers
-        branch_convs = nn.ModuleList()
-        if num_branch_convs > 0:
-            dpr = [x.item() for x in torch.linspace(0, self.drop_path_rate, num_branch_convs)]  # stochastic depth decay rule
-            for i in range(num_branch_convs):
-                conv_in_channels = (
-                    last_layer_dim if i == 0 else self.conv_out_channels)
-                branch_convs.append(Block(
-                        dim=conv_in_channels,
-                        mlp_ratio=1,
-                        drop=self.drop_rate,
-                        drop_path=dpr[i],))
-            last_layer_dim = self.conv_out_channels
-        # add branch specific fc layers
-        branch_fcs = nn.ModuleList()
-        if num_branch_fcs > 0:
-            # for shared branch, only consider self.with_avg_pool
-            # for separated branches, also consider self.num_shared_fcs
-            if (is_shared
-                    or self.num_shared_fcs == 0) and not self.with_avg_pool:
-                last_layer_dim *= self.roi_feat_area
-            for i in range(num_branch_fcs):
-                fc_in_channels = (
-                    last_layer_dim if i == 0 else self.fc_out_channels)
-                branch_fcs.append(
-                    nn.Linear(fc_in_channels, self.fc_out_channels))
-            last_layer_dim = self.fc_out_channels
-        return branch_convs, branch_fcs, last_layer_dim
-
-    def forward(self, x):
+    def forward(self, x, rois=None):
         """Forward function."""
-        if self.num_shared_convs > 0:
-            for conv in self.shared_convs:
-                x = conv(x)
+        B, C, W, H = x.shape
+        bbox_pred = torch.zeros([B, 5], dtype=x.dtype, device=x.device, requires_grad=False)
 
-        if self.num_shared_fcs > 0:
-            if self.with_avg_pool:
-                x = self.avg_pool(x)
+        # x = self.PWConv(x)
+        for block in self.blocks:
+            x, reg_result = block(x, rois, bbox_pred)
+            if 'XY' in block.predict_cfg:
+                bbox_pred[:, :2] = reg_result
+            if 'WH' in block.predict_cfg:
+                bbox_pred[:, 2:4] = reg_result
+            if 'A'  in block.predict_cfg:
+                bbox_pred[:, 4:] = reg_result
 
-            x = x.flatten(1)
-
-            for fc in self.shared_fcs:
-                x = self.relu(fc(x))
-        # separate branches
         x_cls = x
-        x_reg = x
-
-        for conv in self.cls_convs:
-            x_cls = conv(x_cls)
-        if x_cls.dim() > 2:
-            if self.with_avg_pool:
-                x_cls = self.avg_pool(x_cls)
-            x_cls = x_cls.flatten(1)
-        for fc in self.cls_fcs:
-            x_cls = self.relu(fc(x_cls))
-
-        for conv in self.reg_convs:
-            x_reg = conv(x_reg)
-        if x_reg.dim() > 2:
-            if self.with_avg_pool:
-                x_reg = self.avg_pool(x_reg)
-            x_reg = x_reg.flatten(1)
-        for fc in self.reg_fcs:
-            x_reg = self.relu(fc(x_reg))
-
+        if self.with_avg_pool:
+            x_cls = self.avg_pool(x_cls)
+        x_cls = x_cls.flatten(1)
+        x_cls = self.layernorm(x_cls)
+        # x_cls = self.relu(self.cls_fc(x_cls))
+        
         cls_score = self.fc_cls(x_cls) if self.with_cls else None
-        bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
+        # bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
         return cls_score, bbox_pred
+    

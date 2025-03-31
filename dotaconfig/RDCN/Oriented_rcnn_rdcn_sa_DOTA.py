@@ -73,7 +73,13 @@ model = dict(
         norm_cfg=dict(type='BN', requires_grad=True),
         norm_eval=True,
         style='pytorch',
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+        dcn=dict(type='RDCN', deform_groups=1, fallback_on_stride=False),
+        stage_with_dcn=(False, True, True, True),
+        plugins=[
+            dict(cfg=dict(type='StripAttention', k1=1, k2=19),
+            stages=(False, True, True, True),
+            position='after_conv2')]),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -99,7 +105,7 @@ model = dict(
         loss_bbox=dict(
             type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0)),
     roi_head=dict(
-        type='OrientedConvFormerRoIHead',
+        type='OrientedStandardRoIHead',
         bbox_roi_extractor=dict(
             type='RotatedSingleRoIExtractor',
             roi_layer=dict(
@@ -110,9 +116,9 @@ model = dict(
             out_channels=256,
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
-            type='ConvFormerHead',
+            type='RotatedShared2FCBBoxHead',
             in_channels=256,
-            # fc_out_channels=1024,
+            fc_out_channels=1024,
             roi_feat_size=7,
             num_classes=15,
             bbox_coder=dict(

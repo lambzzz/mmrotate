@@ -73,7 +73,9 @@ model = dict(
         norm_cfg=dict(type='BN', requires_grad=True),
         norm_eval=True,
         style='pytorch',
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+        dcn=dict(type='RDCN', deform_groups=1, fallback_on_stride=False),
+        stage_with_dcn=(False, True, True, True)),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
@@ -99,7 +101,7 @@ model = dict(
         loss_bbox=dict(
             type='SmoothL1Loss', beta=0.1111111111111111, loss_weight=1.0)),
     roi_head=dict(
-        type='OrientedConvFormerRoIHead',
+        type='OrientedStandardRoIHead',
         bbox_roi_extractor=dict(
             type='RotatedSingleRoIExtractor',
             roi_layer=dict(
@@ -110,9 +112,9 @@ model = dict(
             out_channels=256,
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
-            type='ConvFormerHead',
+            type='RotatedShared2FCBBoxHead',
             in_channels=256,
-            # fc_out_channels=1024,
+            fc_out_channels=1024,
             roi_feat_size=7,
             num_classes=15,
             bbox_coder=dict(
@@ -190,7 +192,8 @@ model = dict(
 
 # dataset settings
 dataset_type = 'DOTADataset'
-data_root = '/root/autodl-tmp/split_ss_dota/'
+data_root = '/root/autodl-tmp/split_ms_dota/'
+ss_data_root = '/root/autodl-tmp/split_ss_dota/'
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
@@ -202,6 +205,13 @@ train_pipeline = [
         type='RRandomFlip',
         flip_ratio=[0.25, 0.25, 0.25],
         direction=['horizontal', 'vertical', 'diagonal'],
+        version=angle_version),
+    dict(
+        type='PolyRandomRotate',
+        rotate_ratio=0.5,
+        angles_range=180,
+        auto_bound=False,
+        rect_classes=[9, 11],
         version=angle_version),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
@@ -234,8 +244,8 @@ data = dict(
         version=angle_version),
     val=dict(
         type=dataset_type,
-        ann_file=data_root + 'trainval/annfiles/',
-        img_prefix=data_root + 'trainval/images/',
+        ann_file=ss_data_root + 'trainval/annfiles/',
+        img_prefix=ss_data_root + 'trainval/images/',
         pipeline=test_pipeline,
         version=angle_version),
     test=dict(
